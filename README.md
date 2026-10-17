@@ -1,68 +1,71 @@
-# HierRAG：单文档多模态医学问答
+> **Translating full content to English**
 
+
+
+# HierRAG: Single-Document Multimodal Medical Question Answering
 
 Dataset: https://huggingface.co/datasets/yubo2333/MMLongBench-Doc.
 
-HierRAG 是一个面向长篇医学 PDF/OCR Markdown 的分层检索增强问答系统。系统同时利用 PDF 页面视觉信息、局部文本节点和章节主题摘要，在**用户指定的单份文档内**检索证据，经按页融合与重排序后生成答案。
+HierRAG is a hierarchical retrieval-augmented question-answering system for long medical PDF/OCR Markdown documents. The system simultaneously uses PDF page-level visual information, local text nodes, and chapter-level topic summaries to retrieve evidence **within a single document specified by the user**. The retrieved evidence is fused and reranked by page before answers are generated.
 
-## 1. 核心约束
+## 1. Core Constraints
 
-- 索引构建接口接收一个目录或单个 Markdown 路径；传入目录时递归处理全部 `.md` 文件。
-- 每份 Markdown 建立独立索引目录，禁止合并成全局检索域。
-- 查询必须同时提供 `question` 和 `document_name`。
-- 查询服务先解析唯一文档，再只加载该文档的三路索引。
-- 不同目录下出现同名 Markdown（例如两个 `001.md`）时拒绝构建，避免检索串库。
+- The index-building interface accepts either a directory or a single Markdown path. When a directory is provided, all `.md` files are processed recursively.
+- Each Markdown file has an independent index directory. Merging multiple documents into a global retrieval domain is prohibited.
+- Queries must provide both `question` and `document_name`.
+- The query service first resolves the unique document, then loads only the three indexes belonging to that document.
+- If Markdown files with the same name appear in different directories—for example, two `001.md` files—index construction is rejected to prevent cross-document retrieval contamination.
 
-## 2. 系统流程
+## 2. System Workflow
 
 ```text
-PDF ──页面渲染──> ColPali 视觉页面多向量索引 ─┐
-                                                   │
-OCR Markdown ─┬─图像/表格 VLM 描述─> 视觉语义索引 ┤
-              ├─标题树/文本切块────> 文本节点索引 ├─按页融合去重─> Jina 重排─> LLM 答案
-              └─章节自底向上摘要───> 主题聚类索引 ┘
+PDF ──page rendering──> ColPali visual page multi-vector index ─┐
+                                                               │
+OCR Markdown ─┬─image/table VLM description─> visual semantic index ┤
+              ├─heading tree/text chunking────> text node index    ├─page-level fusion and deduplication─> Jina reranking─> LLM answer
+              └─bottom-up chapter summarization─> topic cluster index ┘
 ```
 
-三路检索职责：
+Responsibilities of the three retrieval channels:
 
-- `visual`：ColPali/ColQwen2 页面级视觉检索，保留页面布局、图表和图文关系。
-- `text`：Jina Embeddings + FAISS 节点级检索，定位段落、句子、表格描述等局部证据。
-- `cluster`：章节摘要 KMeans 聚类后两阶段检索，补充跨页主题证据。
+- `visual`: ColPali/ColQwen2 page-level visual retrieval, preserving page layout, charts, and image-text relationships.
+- `text`: Jina Embeddings + FAISS node-level retrieval, locating local evidence such as paragraphs, sentences, and table descriptions.
+- `cluster`: Two-stage retrieval based on KMeans clustering of chapter summaries, supplementing cross-page topic evidence.
 
-候选证据先映射到 PDF 页码，以页面为单位去重；随后使用 RRF 融合，并在重排序模型可用时执行二次排序。答案生成会同时提交文本证据和已召回页面图像，要求模型在内部进行逐步推理，仅返回最终答案。
+Candidate evidence is first mapped to PDF page numbers and deduplicated at the page level. RRF fusion is then applied, followed by a second-stage reranking step when a reranking model is available. Answer generation submits both textual evidence and the retrieved page images, requiring the model to perform step-by-step reasoning internally and return only the final answer.
 
-## 3. 项目结构
+## 3. Project Structure
 
 ```text
 app/
-├── main.py                         # FastAPI 入口
+├── main.py                         # FastAPI entry point
 ├── router/
-│   ├── index.py                    # 索引构建接口
-│   └── retrieval.py                # 单文档检索接口
+│   ├── index.py                    # Index construction API
+│   └── retrieval.py                # Single-document retrieval API
 ├── models/
-│   ├── api_models.py               # HTTP 请求/响应模型
-│   └── hier_rag.py                 # 证据与文档领域模型
+│   ├── api_models.py               # HTTP request/response models
+│   └── hier_rag.py                 # Evidence and document domain models
 ├── database/
-│   ├── dense_index.py              # 文本/视觉描述 FAISS
-│   └── topic_index.py              # 章节摘要聚类索引
+│   ├── dense_index.py              # Text/visual-description FAISS index
+│   └── topic_index.py              # Chapter-summary clustering index
 └── service/
-    ├── document_registry.py        # 文档发现、PDF 配对、名称解析
-    ├── multimodal_preprocessor.py  # 图像/表格自然语言描述
-    ├── doc2tree.py                 # Markdown 层次树和文本节点
-    ├── page_mapping.py             # 节点到 PDF 页码映射
-    ├── summary_service.py          # 自底向上章节摘要
-    ├── visual_index_service.py     # ColPali 页面索引
-    ├── index_service.py            # 索引构建编排
-    ├── hier_retrieval_service.py   # 单文档三通道检索
-    ├── evidence_fusion.py          # 按页融合、去重、重排
-    └── answer_service.py           # 多模态答案生成
+    ├── document_registry.py        # Document discovery, PDF pairing, name resolution
+    ├── multimodal_preprocessor.py  # Image/table natural-language descriptions
+    ├── doc2tree.py                 # Markdown hierarchy tree and text nodes
+    ├── page_mapping.py             # Node-to-PDF-page mapping
+    ├── summary_service.py          # Bottom-up chapter summarization
+    ├── visual_index_service.py     # ColPali page indexing
+    ├── index_service.py            # Index construction orchestration
+    ├── hier_retrieval_service.py   # Single-document three-channel retrieval
+    ├── evidence_fusion.py          # Page-level fusion, deduplication, reranking
+    └── answer_service.py           # Multimodal answer generation
 ```
 
-根目录中的 `baseline/`、`new_exp/`、`ablation_study/` 和 `evaluation/` 是历史基线、实验与评测产物，不会被 FastAPI 主入口加载。
+The `baseline/`, `new_exp/`, `ablation_study/`, and `evaluation/` directories in the project root contain historical baselines, experiments, and evaluation artifacts. They are not loaded by the FastAPI main entry point.
 
-## 4. 输入数据约定
+## 4. Input Data Conventions
 
-OCR 不是本服务接口的一部分。索引接口要求 PDF 已经完成 OCR，并存在对应 Markdown。推荐目录如下：
+OCR is not part of this service’s API. The indexing interface requires PDFs that have already undergone OCR, with corresponding Markdown files available. The recommended directory structure is:
 
 ```text
 medical_documents/
@@ -75,35 +78,35 @@ medical_documents/
     └── 002_page_7_table.jpg
 ```
 
-配对规则：
+Pairing rules:
 
-- `001.md` 自动匹配同一输入根目录下的 `001.pdf`。
-- `_processed`、`_ocr`、`_markdown` 后缀在配对时会被忽略。
-- PDF 缺失时仍可构建文本和主题索引；视觉通道降级为 Markdown 图像/表格描述检索。
-- Markdown 图片路径应相对于 Markdown 文件，例如 `![](images/001_page_12_chart.jpg)`。
-- 页码优先从 `<!-- page: 12 -->`、`[[PAGE: 12]]` 或资源名 `page_12` 解析，其次使用目录标题与页码匹配，最后回退第 1 页。
+- `001.md` is automatically matched with `001.pdf` in the same input root directory.
+- The `_processed`, `_ocr`, and `_markdown` suffixes are ignored during pairing.
+- If the PDF is missing, the text and topic indexes can still be built; the visual channel falls back to retrieval based on Markdown image/table descriptions.
+- Markdown image paths should be relative to the Markdown file, for example: `![](images/001_page_12_chart.jpg)`.
+- Page numbers are parsed preferentially from `<!-- page: 12 -->`, `[[PAGE: 12]]`, or resource names such as `page_12`. If unavailable, the system attempts to match directory headings with page numbers, and finally falls back to page 1.
 
-## 5. 环境安装
+## 5. Environment Installation
 
-当前环境基线是 Python 3.10。视觉页面转换还需要系统安装 Poppler。
+The current environment baseline is Python 3.10. Page rendering for the visual pipeline also requires Poppler to be installed on the system.
 
 ```bash
 conda activate search
 cd /home/asus/chen/knowledge_system
 
-# 新环境应先安装与机器 CUDA 驱动匹配的 torch/torchvision。
+# In a new environment, first install torch/torchvision compatible with the machine's CUDA driver.
 pip install -r requirements.txt
 ```
 
-项目同时提供用户指定名称的 `requirement.txt`，它会转向同一份 `requirements.txt`。
+The project also provides a user-requested `requirement.txt`, which redirects to the same `requirements.txt`.
 
-复制配置模板：
+Copy the configuration template:
 
 ```bash
 cp .env.example .env
 ```
 
-至少检查以下配置：
+At minimum, check the following configuration:
 
 ```dotenv
 MODEL_NAME=/path/to/jina-embeddings-v3
@@ -117,9 +120,9 @@ VISUAL_DEVICE=auto
 OPENAI_API_KEY=your-key
 ```
 
-`auto` 会优先选择 `cuda:0`，CUDA 不可用时回退到 CPU。模型较大，生产运行建议使用 GPU，并将模型提前下载到本地。
+`auto` prioritizes `cuda:0` and falls back to the CPU when CUDA is unavailable. The models are relatively large, so using a GPU in production is recommended. Download the models locally in advance.
 
-## 6. 启动服务
+## 6. Starting the Service
 
 ```bash
 conda activate search
@@ -127,12 +130,12 @@ cd /home/asus/chen/knowledge_system
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-- 健康检查：`GET http://localhost:8000/health`
-- OpenAPI：`http://localhost:8000/docs`
+- Health check: `GET http://localhost:8000/health`
+- OpenAPI: `http://localhost:8000/docs`
 
-## 7. 构建索引
+## 7. Building Indexes
 
-接口：`POST /api/v1/index/build`
+Endpoint: `POST /api/v1/index/build`
 
 ```bash
 curl -X POST 'http://localhost:8000/api/v1/index/build' \
@@ -146,17 +149,17 @@ curl -X POST 'http://localhost:8000/api/v1/index/build' \
   }'
 ```
 
-主要参数：
+Main parameters:
 
-| 参数 | 默认值 | 说明 |
+| Parameter | Default | Description |
 | --- | --- | --- |
-| `source_path` | 必填 | 单个 Markdown 或递归扫描目录 |
-| `rebuild` | `true` | 覆盖该文档已有索引 |
-| `describe_multimodal` | `true` | 用 VLM 读取实际图片，并描述图像/表格 |
-| `generate_summaries` | `true` | 用 LLM 生成章节摘要；关闭时生成确定性压缩摘要 |
-| `enable_visual_index` | `true` | 匹配到 PDF 时构建 ColPali 页面索引 |
+| `source_path` | Required | A single Markdown file or a directory to scan recursively |
+| `rebuild` | `true` | Overwrite the existing index for the document |
+| `describe_multimodal` | `true` | Use a VLM to read actual images and describe images/tables |
+| `generate_summaries` | `true` | Use an LLM to generate chapter summaries; when disabled, deterministic compressed summaries are generated |
+| `enable_visual_index` | `true` | Build a ColPali page index when a matching PDF is found |
 
-索引默认写入：
+Indexes are written to the following location by default:
 
 ```text
 db/hier_rag/
@@ -173,9 +176,9 @@ db/hier_rag/
     └── cluster/
 ```
 
-## 8. 单文档检索与问答
+## 8. Single-Document Retrieval and Question Answering
 
-接口：`POST /api/v1/retrieval/query`
+Endpoint: `POST /api/v1/retrieval/query`
 
 ```bash
 curl -X POST 'http://localhost:8000/api/v1/retrieval/query' \
@@ -189,13 +192,12 @@ curl -X POST 'http://localhost:8000/api/v1/retrieval/query' \
   }'
 ```
 
-只有 `question` 和 `document_name` 必填。`document_name` 可以使用构建时记录的 `.md`、匹配的 `.pdf` 或不带扩展名的名称。
+Only `question` and `document_name` are required. `document_name` may use the `.md` filename recorded during indexing, the matching `.pdf` filename, or the name without an extension.
 
-响应包括：
+The response includes:
 
-- `answer`：基于融合证据生成的答案；未配置 API Key 或关闭生成时为 `null`。
-- `evidence`：最终证据、页码、主通道、融合通道、分数和节点信息。
-- `channel_counts`：三路各自的原始召回数量。
+- `answer`: An answer generated from the fused evidence; `null` when no API key is configured or answer generation is disabled.
+- `evidence`: The final evidence, page numbers, primary channel, contributing channels, scores, and node information.
+- `channel_counts`: The number of raw results retrieved by each of the three channels.
 
-系统不会在其他文档中补召回。文档不存在返回 HTTP 404，名称有歧义或索引不一致返回 HTTP 400。
-
+The system does not perform fallback retrieval from other documents. If the document does not exist, the service returns HTTP 404. If the name is ambiguous or the indexes are inconsistent, it returns HTTP 400.
