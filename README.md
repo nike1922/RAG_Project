@@ -1,5 +1,8 @@
 # HierRAG：单文档多模态医学问答
 
+
+Dataset: https://huggingface.co/datasets/yubo2333/MMLongBench-Doc.
+
 HierRAG 是一个面向长篇医学 PDF/OCR Markdown 的分层检索增强问答系统。系统同时利用 PDF 页面视觉信息、局部文本节点和章节主题摘要，在**用户指定的单份文档内**检索证据，经按页融合与重排序后生成答案。
 
 ## 1. 核心约束
